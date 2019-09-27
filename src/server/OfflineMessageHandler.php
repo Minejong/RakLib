@@ -79,7 +79,7 @@ class OfflineMessageHandler{
 			$pk->serverName = $this->sessionManager->getName();
 			$this->sessionManager->sendPacket($pk, $address);
 		}elseif($packet instanceof OpenConnectionRequest1){
-			if($packet->protocol !== 8 or $packet->protocol !== 9){
+			if($packet->protocol !== 8 and $packet->protocol !== 9){
 				$pk = new IncompatibleProtocolVersion();
 				$pk->protocolVersion = $serverProtocol;
 				$pk->serverId = $this->sessionManager->getID();
