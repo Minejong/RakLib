@@ -81,7 +81,7 @@ class OfflineMessageHandler{
 		}elseif($packet instanceof OpenConnectionRequest1){
 			if($packet->protocol !== 8 and $packet->protocol !== 9){
 				$pk = new IncompatibleProtocolVersion();
-				$pk->protocolVersion = $serverProtocol;
+				$pk->protocolVersion = $this->sessionManager->getProtocolVersion();
 				$pk->serverId = $this->sessionManager->getID();
 				$this->sessionManager->sendPacket($pk, $address);
 				$this->sessionManager->getLogger()->notice("Refused connection from $address due to incompatible RakNet protocol version (expected 8 or 9, got $packet->protocol)");
