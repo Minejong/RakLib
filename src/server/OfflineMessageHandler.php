@@ -49,7 +49,7 @@ class OfflineMessageHandler{
 			case OpenConnectionRequest1::$ID:
 				/** @var OpenConnectionRequest1 $packet */
 				$serverProtocol = $this->sessionManager->getProtocolVersion();
-				if($packet->protocol !== $serverProtocol){
+				if($packet->protocol !== 8 and $packet->protocol !== 9){
 					$pk = new IncompatibleProtocolVersion();
 					$pk->protocolVersion = $serverProtocol;
 					$pk->serverId = $this->sessionManager->getID();
