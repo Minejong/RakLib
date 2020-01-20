@@ -58,11 +58,11 @@ class ConnectionRequestAccepted extends Packet{
 		$this->address = $this->getAddress();
 		$this->getShort(); //TODO: check this
 
-		$len = strlen($this->buffer);
+		$len = $this->getBufferSize();
 		$dummy = new InternetAddress("0.0.0.0", 0, 4);
 
 		for($i = 0; $i < RakLib::$SYSTEM_ADDRESS_COUNT; ++$i){
-			$this->systemAddresses[$i] = $this->offset + 16 < $len ? $this->getAddress() : $dummy; //HACK: avoids trying to read too many addresses on bad data
+			$this->systemAddresses[$i] = $this->getOffset() + 16 < $len ? $this->getAddress() : $dummy; //HACK: avoids trying to read too many addresses on bad data
 		}
 
 		$this->sendPingTime = $this->getLong();

@@ -50,10 +50,10 @@ class NewIncomingConnection extends Packet{
 		$this->address = $this->getAddress();
 
 		//TODO: HACK!
-		$stopOffset = strlen($this->buffer) - 16; //buffer length - sizeof(sendPingTime) - sizeof(sendPongTime)
+		$stopOffset = $this->getBufferSize() - 16; //buffer length - sizeof(sendPingTime) - sizeof(sendPongTime)
 		$dummy = new InternetAddress("0.0.0.0", 0, 4);
 		for($i = 0; $i < RakLib::$SYSTEM_ADDRESS_COUNT; ++$i){
-			if($this->offset >= $stopOffset){
+			if($this->getOffset() >= $stopOffset){
 				$this->systemAddresses[$i] = clone $dummy;
 			}else{
 				$this->systemAddresses[$i] = $this->getAddress();

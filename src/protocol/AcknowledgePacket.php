@@ -78,7 +78,7 @@ abstract class AcknowledgePacket extends Packet{
 		}
 
 		$this->putShort($records);
-		$this->buffer .= $payload;
+		$this->put($payload);
 	}
 
 	protected function decodePayload() : void{
