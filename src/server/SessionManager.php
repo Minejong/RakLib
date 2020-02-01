@@ -544,7 +544,7 @@ class SessionManager{
 		$pk = $this->packetPool[$id];
 		if($pk !== null){
 			$pk = clone $pk;
-			$pk->buffer = $buffer;
+			$pk->setBuffer($buffer);
 			return $pk;
 		}
 

@@ -73,9 +73,9 @@ class Datagram extends Packet{
 
 		while(!$this->feof()){
 			$offset = 0;
-			$data = substr($this->buffer, $this->offset);
+			$data = substr($this->getBuffer(), $this->getOffset());
 			$packet = EncapsulatedPacket::fromBinary($data, $offset);
-			$this->offset += $offset;
+			$this->skip($offset);
 			if($packet->buffer === ''){
 				break;
 			}
