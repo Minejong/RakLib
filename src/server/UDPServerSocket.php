@@ -91,9 +91,9 @@ class UDPServerSocket{
 	}
 
 	/**
-	 * @param string $buffer reference parameter
-	 * @param string $source reference parameter
-	 * @param int    $port reference parameter
+	 * @param string &$buffer
+	 * @param string &$source
+	 * @param int    &$port
 	 *
 	 * @return int|bool
 	 */
