@@ -15,9 +15,17 @@
 
 declare(strict_types=1);
 
-namespace raklib\protocol;
+namespace raklib\server\ipc;
 
-class ACK extends AcknowledgePacket{
-	/** @var int */
-	public static $ID = 0xc0;
+final class InterThreadChannelReader{
+	/** @var \Threaded */
+	private $buffer;
+
+	public function __construct(\Threaded $buffer){
+		$this->buffer = $buffer;
+	}
+
+	public function read() : ?string{
+		return $this->buffer->shift();
+	}
 }

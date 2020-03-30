@@ -54,6 +54,9 @@ class Datagram extends Packet{
 		}
 	}
 
+	/**
+	 * @return int
+	 */
 	public function length(){
 		$length = 4;
 		foreach($this->packets as $packet){
@@ -73,12 +76,5 @@ class Datagram extends Packet{
 		while(!$this->feof()){
 			$this->packets[] = EncapsulatedPacket::fromBinary($this);
 		}
-	}
-
-	public function clean(){
-		$this->packets = [];
-		$this->seqNumber = null;
-
-		return parent::clean();
 	}
 }

@@ -17,7 +17,6 @@ declare(strict_types=1);
 
 namespace raklib\server;
 
-use pocketmine\utils\Binary;
 use pocketmine\utils\BinaryDataException;
 use raklib\generic\Socket;
 use raklib\generic\SocketException;
@@ -27,12 +26,11 @@ use raklib\protocol\EncapsulatedPacket;
 use raklib\protocol\NACK;
 use raklib\protocol\Packet;
 use raklib\RakLib;
+use raklib\utils\ExceptionTraceCleaner;
 use raklib\utils\InternetAddress;
 use function asort;
 use function bin2hex;
-use function chr;
 use function count;
-use function dechex;
 use function get_class;
 use function max;
 use function microtime;
@@ -40,21 +38,26 @@ use function ord;
 use function preg_match;
 use function serialize;
 use function strlen;
-use function substr;
 use function time;
 use function time_sleep_until;
 use const PHP_INT_MAX;
 use const SOCKET_ECONNRESET;
 
-class SessionManager{
+class SessionManager implements ServerInterface{
 
 	private const RAKLIB_TPS = 100;
 	private const RAKLIB_TIME_PER_TICK = 1 / self::RAKLIB_TPS;
 
-	/** @var RakLibServer */
-	protected $server;
 	/** @var Socket */
 	protected $socket;
+
+	/** @var \ThreadedLogger */
+	protected $logger;
+
+	/** @var int */
+	protected $serverId;
+	/** @var int */
+	protected $protocolVersion;
 
 	/** @var int */
 	protected $receiveBytes = 0;
@@ -90,6 +93,7 @@ class SessionManager{
 	/** @var string[] regex filters used to block out unwanted raw packets */
 	protected $rawPacketFilters = [];
 
+	/** @var bool */
 	public $portChecking = false;
 
 	/** @var int */
@@ -98,17 +102,31 @@ class SessionManager{
 	/** @var int */
 	protected $maxMtuSize;
 
+	/** @var InternetAddress */
 	protected $reusableAddress;
 
 	/** @var int */
 	protected $nextSessionId = 0;
 
-	public function __construct(RakLibServer $server, Socket $socket, int $maxMtuSize){
-		$this->server = $server;
+	/** @var ServerEventSource */
+	private $eventSource;
+	/** @var ServerEventListener */
+	private $eventListener;
+
+	/** @var ExceptionTraceCleaner */
+	private $traceCleaner;
+
+	public function __construct(int $serverId, \ThreadedLogger $logger, Socket $socket, int $maxMtuSize, int $protocolVersion, ServerEventSource $eventSource, ServerEventListener $eventListener, ExceptionTraceCleaner $traceCleaner){
+		$this->serverId = $serverId;
+		$this->logger = $logger;
 		$this->socket = $socket;
+		$this->maxMtuSize = $maxMtuSize;
+		$this->protocolVersion = $protocolVersion;
+		$this->eventSource = $eventSource;
+		$this->eventListener = $eventListener;
+		$this->traceCleaner = $traceCleaner;
 
 		$this->startTimeMS = (int) (microtime(true) * 1000);
-		$this->maxMtuSize = $maxMtuSize;
 
 		$this->offlineMessageHandler = new OfflineMessageHandler($this);
 
@@ -132,11 +150,11 @@ class SessionManager{
 	}
 
 	public function getProtocolVersion() : int{
-		return $this->server->getProtocolVersion();
+		return $this->protocolVersion;
 	}
 
 	public function getLogger() : \ThreadedLogger{
-		return $this->server->getLogger();
+		return $this->logger;
 	}
 
 	public function run() : void{
@@ -154,11 +172,13 @@ class SessionManager{
 			 * when high traffic is coming either way. Yielding will occur after 100 messages.
 			 */
 			do{
-				for($stream = true, $i = 0; $i < 100 && $stream && !$this->shutdown; ++$i){
-					$stream = $this->receiveStream();
+				$stream = true;
+				for($i = 0; $i < 100 && $stream && !$this->shutdown; ++$i){
+					$stream = $this->eventSource->process($this);
 				}
 
-				for($socket = true, $i = 0; $i < 100 && $socket && !$this->shutdown; ++$i){
+				$socket = true;
+				for($i = 0; $i < 100 && $socket && !$this->shutdown; ++$i){
 					$socket = $this->receivePacket();
 				}
 			}while(!$this->shutdown && ($stream || $socket));
@@ -183,7 +203,7 @@ class SessionManager{
 		if(($this->ticks % self::RAKLIB_TPS) === 0){
 			if($this->sendBytes > 0 or $this->receiveBytes > 0){
 				$diff = max(0.005, $time - $this->lastMeasure);
-				$this->streamOption("bandwidth", serialize([
+				$this->eventListener->handleOption("bandwidth", serialize([
 					"up" => $this->sendBytes / $diff,
 					"down" => $this->receiveBytes / $diff
 				]));
@@ -220,7 +240,7 @@ class SessionManager{
 				return true;
 			}
 
-			$this->getLogger()->debug($e->getMessage());
+			$this->logger->debug($e->getMessage());
 			return false;
 		}
 		if($buffer === null){
@@ -251,39 +271,38 @@ class SessionManager{
 			if($session !== null){
 				$header = ord($buffer[0]);
 				if(($header & Datagram::BITFLAG_VALID) !== 0){
-					if($header & Datagram::BITFLAG_ACK){
+					if(($header & Datagram::BITFLAG_ACK) !== 0){
 						$session->handlePacket(new ACK($buffer));
-					}elseif($header & Datagram::BITFLAG_NAK){
+					}elseif(($header & Datagram::BITFLAG_NAK) !== 0){
 						$session->handlePacket(new NACK($buffer));
 					}else{
 						$session->handlePacket(new Datagram($buffer));
 					}
 				}else{
-					$this->server->getLogger()->debug("Ignored unconnected packet from $address due to session already opened (0x" . bin2hex($buffer[0]) . ")");
+					$this->logger->debug("Ignored unconnected packet from $address due to session already opened (0x" . bin2hex($buffer[0]) . ")");
 				}
 			}elseif(!$this->offlineMessageHandler->handleRaw($buffer, $address)){
 				$handled = false;
 				foreach($this->rawPacketFilters as $pattern){
 					if(preg_match($pattern, $buffer) > 0){
 						$handled = true;
-						$this->streamRaw($address, $buffer);
+						$this->eventListener->handleRaw($address->ip, $address->port, $buffer);
 						break;
 					}
 				}
 
 				if(!$handled){
-					$this->server->getLogger()->debug("Ignored packet from $address due to no session opened (0x" . bin2hex($buffer[0]) . ")");
+					$this->logger->debug("Ignored packet from $address due to no session opened (0x" . bin2hex($buffer[0]) . ")");
 				}
 			}
 		}catch(BinaryDataException $e){
-			$logger = $this->getLogger();
-			$logger->synchronized(function() use($logger, $address, $e, $buffer): void{
-				$logger->debug("Packet from $address (" . strlen($buffer) . " bytes): 0x" . bin2hex($buffer));
-				$logger->debug(get_class($e) . ": " . $e->getMessage() . " in " . $e->getFile() . " on line " . $e->getLine());
-				foreach($this->server->getTrace(0, $e->getTrace()) as $line){
-					$logger->debug($line);
+			$this->logger->synchronized(function() use($address, $e, $buffer): void{
+				$this->logger->debug("Packet from $address (" . strlen($buffer) . " bytes): 0x" . bin2hex($buffer));
+				$this->logger->debug(get_class($e) . ": " . $e->getMessage() . " in " . $e->getFile() . " on line " . $e->getLine());
+				foreach($this->traceCleaner->getTrace(0, $e->getTrace()) as $line){
+					$this->logger->debug($line);
 				}
-				$logger->error("Bad packet from $address: " . $e->getMessage());
+				$this->logger->error("Bad packet from $address: " . $e->getMessage());
 			});
 			$this->blockAddress($address->ip, 5);
 		}
@@ -296,140 +315,50 @@ class SessionManager{
 		try{
 			$this->sendBytes += $this->socket->writePacket($packet->getBuffer(), $address->ip, $address->port);
 		}catch(SocketException $e){
-			$this->getLogger()->debug($e->getMessage());
+			$this->logger->debug($e->getMessage());
 		}
 	}
 
-	public function streamEncapsulated(Session $session, EncapsulatedPacket $packet, int $flags = RakLib::PRIORITY_NORMAL) : void{
-		$buffer = chr(ITCProtocol::PACKET_ENCAPSULATED) . Binary::writeInt($session->getInternalId()) . chr($flags) . $packet->toInternalBinary();
-		$this->server->pushThreadToMainPacket($buffer);
+	public function getEventListener() : ServerEventListener{
+		return $this->eventListener;
 	}
 
-	public function streamRaw(InternetAddress $source, string $payload) : void{
-		$buffer = chr(ITCProtocol::PACKET_RAW) . chr(strlen($source->ip)) . $source->ip . Binary::writeShort($source->port) . $payload;
-		$this->server->pushThreadToMainPacket($buffer);
+	public function sendEncapsulated(int $sessionId, EncapsulatedPacket $packet, int $flags = RakLib::PRIORITY_NORMAL) : void{
+		$session = $this->sessions[$sessionId] ?? null;
+		if($session !== null and $session->isConnected()){
+			$session->addEncapsulatedToQueue($packet, $flags);
+		}
 	}
 
-	protected function streamClose(int $identifier, string $reason) : void{
-		$buffer = chr(ITCProtocol::PACKET_CLOSE_SESSION) . Binary::writeInt($identifier) . chr(strlen($reason)) . $reason;
-		$this->server->pushThreadToMainPacket($buffer);
+	public function sendRaw(string $address, int $port, string $payload) : void{
+		try{
+			$this->socket->writePacket($payload, $address, $port);
+		}catch(SocketException $e){
+			$this->logger->debug($e->getMessage());
+		}
 	}
 
-	protected function streamInvalid(int $identifier) : void{
-		$buffer = chr(ITCProtocol::PACKET_INVALID_SESSION) . Binary::writeInt($identifier);
-		$this->server->pushThreadToMainPacket($buffer);
-	}
-
-	protected function streamOpen(Session $session) : void{
-		$address = $session->getAddress();
-		$buffer = chr(ITCProtocol::PACKET_OPEN_SESSION) . Binary::writeInt($session->getInternalId()) . chr(strlen($address->ip)) . $address->ip . Binary::writeShort($address->port) . Binary::writeLong($session->getID());
-		$this->server->pushThreadToMainPacket($buffer);
-	}
-
-	protected function streamACK(int $identifier, int $identifierACK) : void{
-		$buffer = chr(ITCProtocol::PACKET_ACK_NOTIFICATION) . Binary::writeInt($identifier) . Binary::writeInt($identifierACK);
-		$this->server->pushThreadToMainPacket($buffer);
+	public function closeSession(int $sessionId) : void{
+		if(isset($this->sessions[$sessionId])){
+			$this->sessions[$sessionId]->flagForDisconnection();
+		}
 	}
 
 	/**
-	 * @param string $name
-	 * @param mixed  $value
+	 * TODO: replace this crap with a proper API
 	 */
-	protected function streamOption(string $name, $value) : void{
-		$buffer = chr(ITCProtocol::PACKET_SET_OPTION) . chr(strlen($name)) . $name . $value;
-		$this->server->pushThreadToMainPacket($buffer);
-	}
-
-	public function streamPingMeasure(Session $session, int $pingMS) : void{
-		$buffer = chr(ITCProtocol::PACKET_REPORT_PING) . Binary::writeInt($session->getInternalId()) . Binary::writeInt($pingMS);
-		$this->server->pushThreadToMainPacket($buffer);
-	}
-
-	public function receiveStream() : bool{
-		if(($packet = $this->server->readMainToThreadPacket()) !== null){
-			$id = ord($packet[0]);
-			$offset = 1;
-			if($id === ITCProtocol::PACKET_ENCAPSULATED){
-				$identifier = Binary::readInt(substr($packet, $offset, 4));
-				$offset += 4;
-				$session = $this->sessions[$identifier] ?? null;
-				if($session !== null and $session->isConnected()){
-					$flags = ord($packet[$offset++]);
-					$buffer = substr($packet, $offset);
-					$session->addEncapsulatedToQueue(EncapsulatedPacket::fromInternalBinary($buffer), $flags);
-				}else{
-					$this->streamInvalid($identifier);
-				}
-			}elseif($id === ITCProtocol::PACKET_RAW){
-				$len = ord($packet[$offset++]);
-				$address = substr($packet, $offset, $len);
-				$offset += $len;
-				$port = Binary::readShort(substr($packet, $offset, 2));
-				$offset += 2;
-				$payload = substr($packet, $offset);
-				try{
-					$this->socket->writePacket($payload, $address, $port);
-				}catch(SocketException $e){
-					$this->getLogger()->debug($e->getMessage());
-				}
-			}elseif($id === ITCProtocol::PACKET_CLOSE_SESSION){
-				$identifier = Binary::readInt(substr($packet, $offset, 4));
-				if(isset($this->sessions[$identifier])){
-					$this->sessions[$identifier]->flagForDisconnection();
-				}else{
-					$this->streamInvalid($identifier);
-				}
-			}elseif($id === ITCProtocol::PACKET_INVALID_SESSION){
-				$identifier = Binary::readInt(substr($packet, $offset, 4));
-				if(isset($this->sessions[$identifier])){
-					$this->removeSession($this->sessions[$identifier]);
-				}
-			}elseif($id === ITCProtocol::PACKET_SET_OPTION){
-				$len = ord($packet[$offset++]);
-				$name = substr($packet, $offset, $len);
-				$offset += $len;
-				$value = substr($packet, $offset);
-				switch($name){
-					case "name":
-						$this->name = $value;
-						break;
-					case "portChecking":
-						$this->portChecking = (bool) $value;
-						break;
-					case "packetLimit":
-						$this->packetLimit = (int) $value;
-						break;
-				}
-			}elseif($id === ITCProtocol::PACKET_BLOCK_ADDRESS){
-				$len = ord($packet[$offset++]);
-				$address = substr($packet, $offset, $len);
-				$offset += $len;
-				$timeout = Binary::readInt(substr($packet, $offset, 4));
-				$this->blockAddress($address, $timeout);
-			}elseif($id === ITCProtocol::PACKET_UNBLOCK_ADDRESS){
-				$len = ord($packet[$offset++]);
-				$address = substr($packet, $offset, $len);
-				$this->unblockAddress($address);
-			}elseif($id === ITCProtocol::PACKET_RAW_FILTER){
-				$pattern = substr($packet, $offset);
-				$this->rawPacketFilters[] = $pattern;
-			}elseif($id === ITCProtocol::PACKET_SHUTDOWN){
-				foreach($this->sessions as $session){
-					$this->removeSession($session);
-				}
-
-				$this->socket->close();
-				$this->shutdown = true;
-			}elseif($id === ITCProtocol::PACKET_EMERGENCY_SHUTDOWN){
-				$this->shutdown = true;
-			}else{
-				$this->getLogger()->debug("Unknown RakLib internal packet (ID 0x" . dechex($id) . ") received from main thread");
-			}
-
-			return true;
+	public function setOption(string $name, string $value) : void{
+		switch($name){
+			case "name":
+				$this->name = $value;
+				break;
+			case "portChecking":
+				$this->portChecking = (bool) $value;
+				break;
+			case "packetLimit":
+				$this->packetLimit = (int) $value;
+				break;
 		}
-
-		return false;
 	}
 
 	public function blockAddress(string $address, int $timeout = 300) : void{
@@ -438,7 +367,7 @@ class SessionManager{
 			if($timeout === -1){
 				$final = PHP_INT_MAX;
 			}else{
-				$this->getLogger()->notice("Blocked $address for $timeout seconds");
+				$this->logger->notice("Blocked $address for $timeout seconds");
 			}
 			$this->block[$address] = $final;
 		}elseif($this->block[$address] < $final){
@@ -448,7 +377,21 @@ class SessionManager{
 
 	public function unblockAddress(string $address) : void{
 		unset($this->block[$address]);
-		$this->getLogger()->debug("Unblocked $address");
+		$this->logger->debug("Unblocked $address");
+	}
+
+	public function addRawPacketFilter(string $regex) : void{
+		$this->rawPacketFilters[] = $regex;
+	}
+
+	public function shutdown() : void{
+		//TODO: this won't flush packets, might result in lost disconnection messages
+		foreach($this->sessions as $session){
+			$this->removeSession($session);
+		}
+
+		$this->socket->close();
+		$this->shutdown = true;
 	}
 
 	/**
@@ -472,10 +415,10 @@ class SessionManager{
 			$this->nextSessionId &= 0x7fffffff; //we don't expect more than 2 billion simultaneous connections, and this fits in 4 bytes
 		}
 
-		$session = new Session($this, $this->server->getLogger(), clone $address, $clientId, $mtuSize, $this->nextSessionId);
+		$session = new Session($this, $this->logger, clone $address, $clientId, $mtuSize, $this->nextSessionId);
 		$this->sessionsByAddress[$address->toString()] = $session;
 		$this->sessions[$this->nextSessionId] = $session;
-		$this->getLogger()->debug("Created session for $address with MTU size $mtuSize");
+		$this->logger->debug("Created session for $address with MTU size $mtuSize");
 
 		return $session;
 	}
@@ -485,7 +428,7 @@ class SessionManager{
 		if(isset($this->sessions[$id])){
 			$this->sessions[$id]->close();
 			$this->removeSessionInternal($session);
-			$this->streamClose($id, $reason);
+			$this->eventListener->closeSession($id, $reason);
 		}
 	}
 
@@ -494,7 +437,8 @@ class SessionManager{
 	}
 
 	public function openSession(Session $session) : void{
-		$this->streamOpen($session);
+		$address = $session->getAddress();
+		$this->eventListener->openSession($session->getInternalId(), $address->ip, $address->port, $session->getID());
 	}
 
 	private function checkSessions() : void{
@@ -511,7 +455,7 @@ class SessionManager{
 	}
 
 	public function notifyACK(Session $session, int $identifierACK) : void{
-		$this->streamACK($session->getInternalId(), $identifierACK);
+		$this->eventListener->notifyACK($session->getInternalId(), $identifierACK);
 	}
 
 	public function getName() : string{
@@ -519,6 +463,6 @@ class SessionManager{
 	}
 
 	public function getID() : int{
-		return $this->server->getServerId();
+		return $this->serverId;
 	}
 }

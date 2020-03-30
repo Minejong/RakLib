@@ -15,9 +15,9 @@
 
 declare(strict_types=1);
 
-namespace raklib\protocol;
+namespace raklib\server;
 
-class ACK extends AcknowledgePacket{
-	/** @var int */
-	public static $ID = 0xc0;
+interface ServerEventSource{
+
+	public function process(ServerInterface $server) : bool;
 }
