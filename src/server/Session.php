@@ -50,8 +50,8 @@ class Session{
 
 	public const MIN_MTU_SIZE = 400;
 
-	/** @var SessionManager */
-	private $sessionManager;
+	/** @var Server */
+	private $server;
 
 	/** @var \Logger */
 	private $logger;
@@ -90,11 +90,11 @@ class Session{
 	/** @var SendReliabilityLayer */
 	private $sendLayer;
 
-	public function __construct(SessionManager $sessionManager, \Logger $logger, InternetAddress $address, int $clientId, int $mtuSize, int $internalId){
+	public function __construct(Server $server, \Logger $logger, InternetAddress $address, int $clientId, int $mtuSize, int $internalId){
 		if($mtuSize < self::MIN_MTU_SIZE){
 			throw new \InvalidArgumentException("MTU size must be at least " . self::MIN_MTU_SIZE . ", got $mtuSize");
 		}
-		$this->sessionManager = $sessionManager;
+		$this->server = $server;
 		$this->logger = new \PrefixedLogger($logger, "Session: " . $address->toString());
 		$this->address = $address;
 		$this->id = $clientId;
@@ -120,7 +120,7 @@ class Session{
 				$this->sendPacket($datagram);
 			},
 			function(int $identifierACK) : void{
-				$this->sessionManager->getEventListener()->notifyACK($this->internalId, $identifierACK);
+				$this->server->getEventListener()->notifyACK($this->internalId, $identifierACK);
 			}
 		);
 	}
@@ -155,17 +155,22 @@ class Session{
 
 	public function update(float $time) : void{
 		if(!$this->isActive and ($this->lastUpdate + 10) < $time){
-			$this->disconnect("timeout");
+			$this->forciblyDisconnect("timeout");
 
 			return;
 		}
 
-		if($this->state === self::STATE_DISCONNECTING and (
-			(!$this->sendLayer->needsUpdate() and !$this->recvLayer->needsUpdate()) or
-			$this->disconnectionTime + 10 < $time)
-		){
-			$this->close();
-			return;
+		if($this->state === self::STATE_DISCONNECTING){
+			//by this point we already told the event listener that the session is closing, so we don't need to do it again
+			if(!$this->sendLayer->needsUpdate() and !$this->recvLayer->needsUpdate()){
+				$this->state = self::STATE_DISCONNECTED;
+				$this->logger->debug("Client cleanly disconnected, marking session for destruction");
+				return;
+			}elseif($this->disconnectionTime + 10 < $time){
+				$this->state = self::STATE_DISCONNECTED;
+				$this->logger->debug("Timeout during graceful disconnect, forcibly closing session");
+				return;
+			}
 		}
 
 		$this->isActive = false;
@@ -177,10 +182,6 @@ class Session{
 			$this->sendPing();
 			$this->lastPingTime = $time;
 		}
-	}
-
-	public function disconnect(string $reason = "unknown") : void{
-		$this->sessionManager->removeSession($this, $reason);
 	}
 
 	private function queueConnectedPacket(Packet $packet, int $reliability, int $orderChannel, int $flags = RakLib::PRIORITY_NORMAL) : void{
@@ -199,17 +200,17 @@ class Session{
 	}
 
 	private function sendPacket(Packet $packet) : void{
-		$this->sessionManager->sendPacket($packet, $this->address);
+		$this->server->sendPacket($packet, $this->address);
 	}
 
 	private function sendPing(int $reliability = PacketReliability::UNRELIABLE) : void{
 		$pk = new ConnectedPing();
-		$pk->sendPingTime = $this->sessionManager->getRakNetTimeMS();
+		$pk->sendPingTime = $this->server->getRakNetTimeMS();
 		$this->queueConnectedPacket($pk, $reliability, 0, RakLib::PRIORITY_IMMEDIATE);
 	}
 
 	private function handleEncapsulatedPacketRoute(EncapsulatedPacket $packet) : void{
-		if($this->sessionManager === null){
+		if($this->server === null){
 			return;
 		}
 
@@ -223,31 +224,30 @@ class Session{
 					$pk = new ConnectionRequestAccepted;
 					$pk->address = $this->address;
 					$pk->sendPingTime = $dataPacket->sendPingTime;
-					$pk->sendPongTime = $this->sessionManager->getRakNetTimeMS();
+					$pk->sendPongTime = $this->server->getRakNetTimeMS();
 					$this->queueConnectedPacket($pk, PacketReliability::UNRELIABLE, 0, RakLib::PRIORITY_IMMEDIATE);
 				}elseif($id === NewIncomingConnection::$ID){
 					$dataPacket = new NewIncomingConnection($packet->buffer);
 					$dataPacket->decode();
 
-					if($dataPacket->address->port === $this->sessionManager->getPort() or !$this->sessionManager->portChecking){
+					if($dataPacket->address->port === $this->server->getPort() or !$this->server->portChecking){
 						$this->state = self::STATE_CONNECTED; //FINALLY!
 						$this->isTemporal = false;
-						$this->sessionManager->openSession($this);
+						$this->server->openSession($this);
 
 						//$this->handlePong($dataPacket->sendPingTime, $dataPacket->sendPongTime); //can't use this due to system-address count issues in MCPE >.<
 						$this->sendPing();
 					}
 				}
 			}elseif($id === DisconnectionNotification::$ID){
-				//TODO: we're supposed to send an ACK for this, but currently we're just deleting the session straight away
-				$this->disconnect("client disconnect");
+				$this->flagForDisconnection("client disconnect");
 			}elseif($id === ConnectedPing::$ID){
 				$dataPacket = new ConnectedPing($packet->buffer);
 				$dataPacket->decode();
 
 				$pk = new ConnectedPong;
 				$pk->sendPingTime = $dataPacket->sendPingTime;
-				$pk->sendPongTime = $this->sessionManager->getRakNetTimeMS();
+				$pk->sendPongTime = $this->server->getRakNetTimeMS();
 				$this->queueConnectedPacket($pk, PacketReliability::UNRELIABLE, 0);
 			}elseif($id === ConnectedPong::$ID){
 				$dataPacket = new ConnectedPong($packet->buffer);
@@ -256,7 +256,7 @@ class Session{
 				$this->handlePong($dataPacket->sendPingTime, $dataPacket->sendPongTime);
 			}
 		}elseif($this->state === self::STATE_CONNECTED){
-			$this->sessionManager->getEventListener()->handleEncapsulated($this->internalId, $packet->buffer);
+			$this->server->getEventListener()->handleEncapsulated($this->internalId, $packet->buffer);
 		}else{
 			//$this->logger->notice("Received packet before connection: " . bin2hex($packet->buffer));
 		}
@@ -267,8 +267,8 @@ class Session{
 	 * @param int $sendPongTime TODO: clock differential stuff
 	 */
 	private function handlePong(int $sendPingTime, int $sendPongTime) : void{
-		$this->lastPingMeasure = $this->sessionManager->getRakNetTimeMS() - $sendPingTime;
-		$this->sessionManager->getEventListener()->notifyACK($this->internalId, $this->lastPingMeasure);
+		$this->lastPingMeasure = $this->server->getRakNetTimeMS() - $sendPingTime;
+		$this->server->getEventListener()->notifyACK($this->internalId, $this->lastPingMeasure);
 	}
 
 	public function handlePacket(Packet $packet) : void{
@@ -284,20 +284,30 @@ class Session{
 		}
 	}
 
-	public function flagForDisconnection() : void{
+	/**
+	 * Initiates a graceful asynchronous disconnect which ensures both parties got all packets.
+	 */
+	public function flagForDisconnection(string $reason) : void{
 		$this->state = self::STATE_DISCONNECTING;
 		$this->disconnectionTime = microtime(true);
+		$this->queueConnectedPacket(new DisconnectionNotification(), PacketReliability::RELIABLE_ORDERED, 0, RakLib::PRIORITY_IMMEDIATE);
+		$this->server->getEventListener()->closeSession($this->internalId, $reason);
+		$this->logger->debug("Requesting graceful disconnect because \"$reason\"");
 	}
 
-	public function close() : void{
-		if($this->state !== self::STATE_DISCONNECTED){
-			$this->state = self::STATE_DISCONNECTED;
+	/**
+	 * Disconnects the session with immediate effect, regardless of current session state. Usually used in timeout cases.
+	 */
+	public function forciblyDisconnect(string $reason) : void{
+		$this->state = self::STATE_DISCONNECTED;
+		$this->server->getEventListener()->closeSession($this->internalId, $reason);
+		$this->logger->debug("Forcibly disconnecting session due to \"$reason\"");
+	}
 
-			//TODO: the client will send an ACK for this, but we aren't handling it (debug spam)
-			$this->queueConnectedPacket(new DisconnectionNotification(), PacketReliability::RELIABLE_ORDERED, 0, RakLib::PRIORITY_IMMEDIATE);
-
-			$this->logger->debug("Closed session");
-			$this->sessionManager->removeSessionInternal($this);
-		}
+	/**
+	 * Returns whether the session is ready to be destroyed (either properly cleaned up or forcibly terminated)
+	 */
+	public function isFullyDisconnected() : bool{
+		return $this->state === self::STATE_DISCONNECTED;
 	}
 }
