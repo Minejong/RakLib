@@ -19,5 +19,11 @@
 		"psr-4": {
 			"raklib\\": "src/"
 		}
-	}
+	},
+	"repositories": [
+		{
+			"type": "vcs",
+			"url": "https://github.com/Minejong/RakLib"
+		}
+	]
 }
