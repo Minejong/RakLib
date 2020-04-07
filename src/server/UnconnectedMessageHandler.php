@@ -34,7 +34,7 @@ use function ord;
 use function strlen;
 use function substr;
 
-class OfflineMessageHandler{
+class UnconnectedMessageHandler{
 	/** @var Server */
 	private $server;
 	/** @var OfflineMessage[]|\SplFixedArray<OfflineMessage> */
@@ -71,7 +71,7 @@ class OfflineMessageHandler{
 		return $this->handle($pk, $address);
 	}
 
-	public function handle(OfflineMessage $packet, InternetAddress $address) : bool{
+	private function handle(OfflineMessage $packet, InternetAddress $address) : bool{
 		if($packet instanceof UnconnectedPing){
 			$pk = new UnconnectedPong();
 			$pk->serverId = $this->server->getID();
