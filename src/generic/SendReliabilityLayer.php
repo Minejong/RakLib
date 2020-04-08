@@ -23,11 +23,9 @@ use raklib\protocol\EncapsulatedPacket;
 use raklib\protocol\NACK;
 use raklib\protocol\PacketReliability;
 use raklib\protocol\SplitPacketInfo;
-use raklib\RakLib;
 use function array_fill;
 use function assert;
 use function count;
-use function microtime;
 use function str_split;
 use function strlen;
 use function time;
@@ -48,8 +46,8 @@ final class SendReliabilityLayer{
 	/** @var int */
 	private $mtuSize;
 
-	/** @var Datagram */
-	private $sendQueue;
+	/** @var EncapsulatedPacket[] */
+	private $sendQueue = [];
 
 	/** @var int */
 	private $splitID = 0;
@@ -66,10 +64,10 @@ final class SendReliabilityLayer{
 	private $sendSequencedIndex;
 
 	/** @var Datagram[] */
-	private $packetToSend = [];
+	private $resendQueue = [];
 
-	/** @var Datagram[] */
-	private $recoveryQueue = [];
+	/** @var ReliableCacheEntry[] */
+	private $reliableCache = [];
 
 	/** @var int[][] */
 	private $needACK = [];
@@ -83,64 +81,67 @@ final class SendReliabilityLayer{
 		$this->sendDatagramCallback = $sendDatagram;
 		$this->onACK = $onACK;
 
-		$this->sendQueue = new Datagram();
-
 		$this->sendOrderedIndex = array_fill(0, PacketReliability::MAX_ORDER_CHANNELS, 0);
 		$this->sendSequencedIndex = array_fill(0, PacketReliability::MAX_ORDER_CHANNELS, 0);
 	}
 
 	private function sendDatagram(Datagram $datagram) : void{
 		if($datagram->seqNumber !== null){
-			unset($this->recoveryQueue[$datagram->seqNumber]);
+			unset($this->reliableCache[$datagram->seqNumber]);
 		}
 		$datagram->seqNumber = $this->sendSeqNumber++;
-		$datagram->sendTime = microtime(true);
-		$this->recoveryQueue[$datagram->seqNumber] = $datagram;
 		($this->sendDatagramCallback)($datagram);
+
+		$resendable = [];
+		foreach($datagram->packets as $pk){
+			if(PacketReliability::isReliable($pk->reliability)){
+				$resendable[] = $pk;
+			}
+		}
+		if(count($resendable) !== 0){
+			$this->reliableCache[$datagram->seqNumber] = new ReliableCacheEntry($resendable);
+		}
 	}
 
 	public function sendQueue() : void{
-		if(count($this->sendQueue->packets) > 0){
-			$this->sendDatagram($this->sendQueue);
-			$this->sendQueue = new Datagram();
+		if(count($this->sendQueue) > 0){
+			$datagram = new Datagram();
+			$datagram->packets = $this->sendQueue;
+			$this->sendDatagram($datagram);
+			$this->sendQueue = [];
 		}
 	}
 
-	/**
-	 * @param EncapsulatedPacket $pk
-	 * @param int                $flags
-	 */
-	private function addToQueue(EncapsulatedPacket $pk, int $flags = RakLib::PRIORITY_NORMAL) : void{
-		$priority = $flags & 0b00000111;
-		if($pk->needACK and $pk->messageIndex !== null){
+	private function addToQueue(EncapsulatedPacket $pk, bool $immediate) : void{
+		if($pk->identifierACK !== null and $pk->messageIndex !== null){
 			$this->needACK[$pk->identifierACK][$pk->messageIndex] = $pk->messageIndex;
 		}
 
-		$length = $this->sendQueue->length();
+		$length = Datagram::HEADER_SIZE;
+		foreach($this->sendQueue as $queued){
+			$length += $queued->getTotalLength();
+		}
+
 		if($length + $pk->getTotalLength() > $this->mtuSize - 36){ //IP header (20 bytes) + UDP header (8 bytes) + RakNet weird (8 bytes) = 36 bytes
 			$this->sendQueue();
 		}
 
-		if($pk->needACK){
-			$this->sendQueue->packets[] = clone $pk;
-			$pk->needACK = false;
+		if($pk->identifierACK !== null){
+			$this->sendQueue[] = clone $pk;
+			$pk->identifierACK = null;
 		}else{
-			$this->sendQueue->packets[] = $pk->toBinary();
+			$this->sendQueue[] = $pk;
 		}
 
-		if($priority === RakLib::PRIORITY_IMMEDIATE){
+		if($immediate){
 			// Forces pending sends to go out now, rather than waiting to the next update interval
 			$this->sendQueue();
 		}
 	}
 
-	/**
-	 * @param EncapsulatedPacket $packet
-	 * @param int                $flags
-	 */
-	public function addEncapsulatedToQueue(EncapsulatedPacket $packet, int $flags = RakLib::PRIORITY_NORMAL) : void{
+	public function addEncapsulatedToQueue(EncapsulatedPacket $packet, bool $immediate = false) : void{
 
-		if(($packet->needACK = ($flags & RakLib::FLAG_NEED_ACK) > 0) === true){
+		if($packet->identifierACK !== null){
 			$this->needACK[$packet->identifierACK] = [];
 		}
 
@@ -174,22 +175,22 @@ final class SendReliabilityLayer{
 				$pk->orderChannel = $packet->orderChannel;
 				$pk->orderIndex = $packet->orderIndex;
 
-				$this->addToQueue($pk, $flags | RakLib::PRIORITY_IMMEDIATE);
+				$this->addToQueue($pk, true);
 			}
 		}else{
 			if(PacketReliability::isReliable($packet->reliability)){
 				$packet->messageIndex = $this->messageIndex++;
 			}
-			$this->addToQueue($packet, $flags);
+			$this->addToQueue($packet, false);
 		}
 	}
 
 	public function onACK(ACK $packet) : void{
 		$packet->decode();
 		foreach($packet->packets as $seq){
-			if(isset($this->recoveryQueue[$seq])){
-				foreach($this->recoveryQueue[$seq]->packets as $pk){
-					if($pk instanceof EncapsulatedPacket and $pk->needACK and $pk->messageIndex !== null){
+			if(isset($this->reliableCache[$seq])){
+				foreach($this->reliableCache[$seq]->getPackets() as $pk){
+					if($pk->identifierACK !== null and $pk->messageIndex !== null){
 						unset($this->needACK[$pk->identifierACK][$pk->messageIndex]);
 						if(count($this->needACK[$pk->identifierACK]) === 0){
 							unset($this->needACK[$pk->identifierACK]);
@@ -197,7 +198,7 @@ final class SendReliabilityLayer{
 						}
 					}
 				}
-				unset($this->recoveryQueue[$seq]);
+				unset($this->reliableCache[$seq]);
 			}
 		}
 	}
@@ -205,42 +206,47 @@ final class SendReliabilityLayer{
 	public function onNACK(NACK $packet) : void{
 		$packet->decode();
 		foreach($packet->packets as $seq){
-			if(isset($this->recoveryQueue[$seq])){
-				$this->packetToSend[] = $this->recoveryQueue[$seq];
-				unset($this->recoveryQueue[$seq]);
+			if(isset($this->reliableCache[$seq])){
+				//TODO: group resends if the resulting datagram is below the MTU
+				$resend = new Datagram();
+				$resend->packets = $this->reliableCache[$seq]->getPackets();
+				$this->resendQueue[] = $resend;
+				unset($this->reliableCache[$seq]);
 			}
 		}
 	}
 
 	public function needsUpdate() : bool{
 		return (
-			count($this->sendQueue->packets) !== 0 or
-			count($this->packetToSend) !== 0 or
-			count($this->recoveryQueue) !== 0
+			count($this->sendQueue) !== 0 or
+			count($this->resendQueue) !== 0 or
+			count($this->reliableCache) !== 0
 		);
 	}
 
 	public function update() : void{
-		if(count($this->packetToSend) > 0){
+		if(count($this->resendQueue) > 0){
 			$limit = 16;
-			foreach($this->packetToSend as $k => $pk){
+			foreach($this->resendQueue as $k => $pk){
 				$this->sendDatagram($pk);
-				unset($this->packetToSend[$k]);
+				unset($this->resendQueue[$k]);
 
 				if(--$limit <= 0){
 					break;
 				}
 			}
 
-			if(count($this->packetToSend) > ReceiveReliabilityLayer::$WINDOW_SIZE){
-				$this->packetToSend = [];
+			if(count($this->resendQueue) > ReceiveReliabilityLayer::$WINDOW_SIZE){
+				$this->resendQueue = [];
 			}
 		}
 
-		foreach($this->recoveryQueue as $seq => $pk){
-			if($pk->sendTime < (time() - 8)){
-				$this->packetToSend[] = $pk;
-				unset($this->recoveryQueue[$seq]);
+		foreach($this->reliableCache as $seq => $pk){
+			if($pk->getTimestamp() < (time() - 8)){
+				$resend = new Datagram();
+				$resend->packets = $pk->getPackets();
+				$this->resendQueue[] = $resend;
+				unset($this->reliableCache[$seq]);
 			}else{
 				break;
 			}

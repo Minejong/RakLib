@@ -34,10 +34,12 @@ class Datagram extends Packet{
 	public const BITFLAG_CONTINUOUS_SEND = 0x08;
 	public const BITFLAG_NEEDS_B_AND_AS = 0x04;
 
+	public const HEADER_SIZE = 1 + 3; //header flags (1) + sequence number (3)
+
 	/** @var int */
 	public $headerFlags = 0;
 
-	/** @var (EncapsulatedPacket|string)[] */
+	/** @var EncapsulatedPacket[] */
 	public $packets = [];
 
 	/** @var int|null */
@@ -50,7 +52,7 @@ class Datagram extends Packet{
 	protected function encodePayload() : void{
 		$this->putLTriad($this->seqNumber);
 		foreach($this->packets as $packet){
-			$this->put($packet instanceof EncapsulatedPacket ? $packet->toBinary() : $packet);
+			$this->put($packet->toBinary());
 		}
 	}
 
@@ -58,9 +60,9 @@ class Datagram extends Packet{
 	 * @return int
 	 */
 	public function length(){
-		$length = 4;
+		$length = self::HEADER_SIZE;
 		foreach($this->packets as $packet){
-			$length += $packet instanceof EncapsulatedPacket ? $packet->getTotalLength() : strlen($packet);
+			$length += $packet->getTotalLength();
 		}
 
 		return $length;
