@@ -31,10 +31,7 @@ final class MultiProtocolAcceptor implements ProtocolAcceptor{
 	/** @var int[] */
 	private $protocolList;
 
-	/**
-	 * @param int[] $protocolList
-	 */
-	public function __construct(array $protocolList){
+	public function __construct(int ...$protocolList){
 		if(count($protocolList) === 0){
 			throw new \InvalidArgumentException("Expected 1 ore more protocols, got 0");
 		}
