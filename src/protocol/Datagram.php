@@ -19,8 +19,6 @@ namespace raklib\protocol;
 
 #include <rules/RakLibPacket.h>
 
-use function strlen;
-
 class Datagram extends Packet{
 	public const BITFLAG_VALID = 0x80;
 	public const BITFLAG_ACK = 0x40;
@@ -45,14 +43,14 @@ class Datagram extends Packet{
 	/** @var int|null */
 	public $seqNumber = null;
 
-	protected function encodeHeader() : void{
-		$this->putByte(self::BITFLAG_VALID | $this->headerFlags);
+	protected function encodeHeader(PacketSerializer $out) : void{
+		$out->putByte(self::BITFLAG_VALID | $this->headerFlags);
 	}
 
-	protected function encodePayload() : void{
-		$this->putLTriad($this->seqNumber);
+	protected function encodePayload(PacketSerializer $out) : void{
+		$out->putLTriad($this->seqNumber);
 		foreach($this->packets as $packet){
-			$this->put($packet->toBinary());
+			$out->put($packet->toBinary());
 		}
 	}
 
@@ -68,15 +66,15 @@ class Datagram extends Packet{
 		return $length;
 	}
 
-	protected function decodeHeader() : void{
-		$this->headerFlags = $this->getByte();
+	protected function decodeHeader(PacketSerializer $in) : void{
+		$this->headerFlags = $in->getByte();
 	}
 
-	protected function decodePayload() : void{
-		$this->seqNumber = $this->getLTriad();
+	protected function decodePayload(PacketSerializer $in) : void{
+		$this->seqNumber = $in->getLTriad();
 
-		while(!$this->feof()){
-			$this->packets[] = EncapsulatedPacket::fromBinary($this);
+		while(!$in->feof()){
+			$this->packets[] = EncapsulatedPacket::fromBinary($in);
 		}
 	}
 }

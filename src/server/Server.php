@@ -25,6 +25,7 @@ use raklib\protocol\Datagram;
 use raklib\protocol\EncapsulatedPacket;
 use raklib\protocol\NACK;
 use raklib\protocol\Packet;
+use raklib\protocol\PacketSerializer;
 use raklib\utils\ExceptionTraceCleaner;
 use raklib\utils\InternetAddress;
 use function asort;
@@ -225,7 +226,6 @@ class Server implements ServerInterface{
 		++$this->ticks;
 	}
 
-
 	private function receivePacket() : bool{
 		$address = $this->reusableAddress;
 
@@ -269,12 +269,14 @@ class Server implements ServerInterface{
 				$header = ord($buffer[0]);
 				if(($header & Datagram::BITFLAG_VALID) !== 0){
 					if(($header & Datagram::BITFLAG_ACK) !== 0){
-						$session->handlePacket(new ACK($buffer));
+						$packet = new ACK();
 					}elseif(($header & Datagram::BITFLAG_NAK) !== 0){
-						$session->handlePacket(new NACK($buffer));
+						$packet = new NACK();
 					}else{
-						$session->handlePacket(new Datagram($buffer));
+						$packet = new Datagram();
 					}
+					$packet->decode(new PacketSerializer($buffer));
+					$session->handlePacket($packet);
 				}else{
 					$this->logger->debug("Ignored unconnected packet from $address due to session already opened (0x" . bin2hex($buffer[0]) . ")");
 				}
@@ -294,7 +296,7 @@ class Server implements ServerInterface{
 				}
 			}
 		}catch(BinaryDataException $e){
-			$logFn = function() use($address, $e, $buffer): void{
+			$logFn = function() use ($address, $e, $buffer): void{
 				$this->logger->debug("Packet from $address (" . strlen($buffer) . " bytes): 0x" . bin2hex($buffer));
 				$this->logger->debug(get_class($e) . ": " . $e->getMessage() . " in " . $e->getFile() . " on line " . $e->getLine());
 				foreach($this->traceCleaner->getTrace(0, $e->getTrace()) as $line){
@@ -314,9 +316,10 @@ class Server implements ServerInterface{
 	}
 
 	public function sendPacket(Packet $packet, InternetAddress $address) : void{
-		$packet->encode();
+		$out = new PacketSerializer(); //TODO: reusable streams to reduce allocations
+		$packet->encode($out);
 		try{
-			$this->sendBytes += $this->socket->writePacket($packet->getBuffer(), $address->ip, $address->port);
+			$this->sendBytes += $this->socket->writePacket($out->getBuffer(), $address->ip, $address->port);
 		}catch(SocketException $e){
 			$this->logger->debug($e->getMessage());
 		}

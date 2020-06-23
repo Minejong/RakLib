@@ -19,10 +19,8 @@ namespace raklib\protocol;
 
 #include <rules/RakLibPacket.h>
 
-
 use raklib\RakLib;
-use function str_pad;
-use function strlen;
+use function str_repeat;
 
 class OpenConnectionRequest1 extends OfflineMessage{
 	public static $ID = MessageIdentifiers::ID_OPEN_CONNECTION_REQUEST_1;
@@ -32,16 +30,16 @@ class OpenConnectionRequest1 extends OfflineMessage{
 	/** @var int */
 	public $mtuSize;
 
-	protected function encodePayload() : void{
-		$this->writeMagic();
-		$this->putByte($this->protocol);
-		$this->setBuffer(str_pad($this->getBuffer(), $this->mtuSize, "\x00"));
+	protected function encodePayload(PacketSerializer $out) : void{
+		$this->writeMagic($out);
+		$out->putByte($this->protocol);
+		$out->put(str_repeat("\x00", $this->mtuSize - $out->getBufferSize()));
 	}
 
-	protected function decodePayload() : void{
-		$this->readMagic();
-		$this->protocol = $this->getByte();
-		$this->mtuSize = $this->getBufferSize();
-		$this->skip($this->mtuSize - $this->getOffset());
+	protected function decodePayload(PacketSerializer $in) : void{
+		$this->readMagic($in);
+		$this->protocol = $in->getByte();
+		$this->mtuSize = $in->getBufferSize();
+		$in->skip($this->mtuSize - $in->getOffset());
 	}
 }

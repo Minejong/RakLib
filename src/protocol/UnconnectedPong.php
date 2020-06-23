@@ -29,17 +29,25 @@ class UnconnectedPong extends OfflineMessage{
 	/** @var string */
 	public $serverName;
 
-	protected function encodePayload() : void{
-		$this->putLong($this->sendPingTime);
-		$this->putLong($this->serverId);
-		$this->writeMagic();
-		$this->putString($this->serverName);
+	public static function create(int $sendPingTime, int $serverId, string $serverName) : self{
+		$result = new self;
+		$result->sendPingTime = $sendPingTime;
+		$result->serverId = $serverId;
+		$result->serverName = $serverName;
+		return $result;
 	}
 
-	protected function decodePayload() : void{
-		$this->sendPingTime = $this->getLong();
-		$this->serverId = $this->getLong();
-		$this->readMagic();
-		$this->serverName = $this->getString();
+	protected function encodePayload(PacketSerializer $out) : void{
+		$out->putLong($this->sendPingTime);
+		$out->putLong($this->serverId);
+		$this->writeMagic($out);
+		$out->putString($this->serverName);
+	}
+
+	protected function decodePayload(PacketSerializer $in) : void{
+		$this->sendPingTime = $in->getLong();
+		$this->serverId = $in->getLong();
+		$this->readMagic($in);
+		$this->serverName = $in->getString();
 	}
 }

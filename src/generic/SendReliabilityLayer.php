@@ -140,7 +140,6 @@ final class SendReliabilityLayer{
 	}
 
 	public function addEncapsulatedToQueue(EncapsulatedPacket $packet, bool $immediate = false) : void{
-
 		if($packet->identifierACK !== null){
 			$this->needACK[$packet->identifierACK] = [];
 		}
@@ -186,7 +185,6 @@ final class SendReliabilityLayer{
 	}
 
 	public function onACK(ACK $packet) : void{
-		$packet->decode();
 		foreach($packet->packets as $seq){
 			if(isset($this->reliableCache[$seq])){
 				foreach($this->reliableCache[$seq]->getPackets() as $pk){
@@ -204,7 +202,6 @@ final class SendReliabilityLayer{
 	}
 
 	public function onNACK(NACK $packet) : void{
-		$packet->decode();
 		foreach($packet->packets as $seq){
 			if(isset($this->reliableCache[$seq])){
 				//TODO: group resends if the resulting datagram is below the MTU

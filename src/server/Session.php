@@ -33,8 +33,8 @@ use raklib\protocol\NACK;
 use raklib\protocol\NewIncomingConnection;
 use raklib\protocol\Packet;
 use raklib\protocol\PacketReliability;
+use raklib\protocol\PacketSerializer;
 use raklib\utils\InternetAddress;
-use function count;
 use function microtime;
 use function ord;
 
@@ -184,12 +184,13 @@ class Session{
 	}
 
 	private function queueConnectedPacket(Packet $packet, int $reliability, int $orderChannel, bool $immediate = false) : void{
-		$packet->encode();
+		$out = new PacketSerializer();  //TODO: reuse streams to reduce allocations
+		$packet->encode($out);
 
 		$encapsulated = new EncapsulatedPacket();
 		$encapsulated->reliability = $reliability;
 		$encapsulated->orderChannel = $orderChannel;
-		$encapsulated->buffer = $packet->getBuffer();
+		$encapsulated->buffer = $out->getBuffer();
 
 		$this->sendLayer->addEncapsulatedToQueue($encapsulated, $immediate);
 	}
@@ -203,9 +204,7 @@ class Session{
 	}
 
 	private function sendPing(int $reliability = PacketReliability::UNRELIABLE) : void{
-		$pk = new ConnectedPing();
-		$pk->sendPingTime = $this->server->getRakNetTimeMS();
-		$this->queueConnectedPacket($pk, $reliability, 0, true);
+		$this->queueConnectedPacket(ConnectedPing::create($this->server->getRakNetTimeMS()), $reliability, 0, true);
 	}
 
 	private function handleEncapsulatedPacketRoute(EncapsulatedPacket $packet) : void{
@@ -217,17 +216,17 @@ class Session{
 		if($id < MessageIdentifiers::ID_USER_PACKET_ENUM){ //internal data packet
 			if($this->state === self::STATE_CONNECTING){
 				if($id === ConnectionRequest::$ID){
-					$dataPacket = new ConnectionRequest($packet->buffer);
-					$dataPacket->decode();
-
-					$pk = new ConnectionRequestAccepted;
-					$pk->address = $this->address;
-					$pk->sendPingTime = $dataPacket->sendPingTime;
-					$pk->sendPongTime = $this->server->getRakNetTimeMS();
-					$this->queueConnectedPacket($pk, PacketReliability::UNRELIABLE, 0, true);
+					$dataPacket = new ConnectionRequest();
+					$dataPacket->decode(new PacketSerializer($packet->buffer));
+					$this->queueConnectedPacket(ConnectionRequestAccepted::create(
+						$this->address,
+						[],
+						$dataPacket->sendPingTime,
+						$this->server->getRakNetTimeMS()
+					), PacketReliability::UNRELIABLE, 0, true);
 				}elseif($id === NewIncomingConnection::$ID){
-					$dataPacket = new NewIncomingConnection($packet->buffer);
-					$dataPacket->decode();
+					$dataPacket = new NewIncomingConnection();
+					$dataPacket->decode(new PacketSerializer($packet->buffer));
 
 					if($dataPacket->address->port === $this->server->getPort() or !$this->server->portChecking){
 						$this->state = self::STATE_CONNECTED; //FINALLY!
@@ -241,16 +240,15 @@ class Session{
 			}elseif($id === DisconnectionNotification::$ID){
 				$this->initiateDisconnect("client disconnect");
 			}elseif($id === ConnectedPing::$ID){
-				$dataPacket = new ConnectedPing($packet->buffer);
-				$dataPacket->decode();
-
-				$pk = new ConnectedPong;
-				$pk->sendPingTime = $dataPacket->sendPingTime;
-				$pk->sendPongTime = $this->server->getRakNetTimeMS();
-				$this->queueConnectedPacket($pk, PacketReliability::UNRELIABLE, 0);
+				$dataPacket = new ConnectedPing();
+				$dataPacket->decode(new PacketSerializer($packet->buffer));
+				$this->queueConnectedPacket(ConnectedPong::create(
+					$dataPacket->sendPingTime,
+					$this->server->getRakNetTimeMS()
+				), PacketReliability::UNRELIABLE, 0);
 			}elseif($id === ConnectedPong::$ID){
-				$dataPacket = new ConnectedPong($packet->buffer);
-				$dataPacket->decode();
+				$dataPacket = new ConnectedPong();
+				$dataPacket->decode(new PacketSerializer($packet->buffer));
 
 				$this->handlePong($dataPacket->sendPingTime, $dataPacket->sendPongTime);
 			}
