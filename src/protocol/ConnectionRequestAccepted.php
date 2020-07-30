@@ -28,6 +28,8 @@ class ConnectionRequestAccepted extends Packet{
 
 	/** @var InternetAddress */
 	public $address;
+	/** @var int */
+	public $systemIndex = -1;
 	/** @var InternetAddress[] */
 	public $systemAddresses = [];
 
@@ -54,7 +56,7 @@ class ConnectionRequestAccepted extends Packet{
 
 	protected function encodePayload(PacketSerializer $out) : void{
 		$out->putAddress($this->address);
-		$out->putShort(0);
+		$out->putLShort($this->systemIndex);
 
 		$dummy = new InternetAddress("0.0.0.0", 0, 4);
 		for($i = 0; $i < RakLib::$SYSTEM_ADDRESS_COUNT; ++$i){
@@ -67,7 +69,7 @@ class ConnectionRequestAccepted extends Packet{
 
 	protected function decodePayload(PacketSerializer $in) : void{
 		$this->address = $in->getAddress();
-		$in->getShort(); //TODO: check this
+		$this->systemIndex = $in->getLShort();
 
 		$len = $in->getBufferSize();
 		$dummy = new InternetAddress("0.0.0.0", 0, 4);
