@@ -32,11 +32,9 @@ use function asort;
 use function bin2hex;
 use function count;
 use function get_class;
-use function max;
 use function microtime;
 use function ord;
 use function preg_match;
-use function serialize;
 use function strlen;
 use function time;
 use function time_sleep_until;
@@ -130,7 +128,6 @@ class Server implements ServerInterface{
 
 	/**
 	 * Returns the time in milliseconds since server start.
-	 * @return int
 	 */
 	public function getRakNetTimeMS() : int{
 		return ((int) (microtime(true) * 1000)) - $this->startTimeMS;
@@ -384,11 +381,6 @@ class Server implements ServerInterface{
 		$this->shutdown = true;
 	}
 
-	/**
-	 * @param InternetAddress $address
-	 *
-	 * @return Session|null
-	 */
 	public function getSessionByAddress(InternetAddress $address) : ?Session{
 		return $this->sessionsByAddress[$address->toString()] ?? null;
 	}
