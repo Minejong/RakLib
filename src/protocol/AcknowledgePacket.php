@@ -34,7 +34,7 @@ abstract class AcknowledgePacket extends Packet{
 	/** @var int[] */
 	public $packets = [];
 
-	protected function encodePayload(PacketSerializer $out) : void{
+	protected function encodePayload() : void{
 		$payload = "";
 		sort($this->packets, SORT_NUMERIC);
 		$count = count($this->packets);
@@ -76,18 +76,18 @@ abstract class AcknowledgePacket extends Packet{
 			++$records;
 		}
 
-		$out->putShort($records);
-		$out->put($payload);
+		$this->putShort($records);
+		$this->put($payload);
 	}
 
-	protected function decodePayload(PacketSerializer $in) : void{
-		$count = $in->getShort();
+	protected function decodePayload() : void{
+		$count = $this->getShort();
 		$this->packets = [];
 		$cnt = 0;
-		for($i = 0; $i < $count and !$in->feof() and $cnt < 4096; ++$i){
-			if($in->getByte() === self::RECORD_TYPE_RANGE){
-				$start = $in->getLTriad();
-				$end = $in->getLTriad();
+		for($i = 0; $i < $count and !$this->feof() and $cnt < 4096; ++$i){
+			if($this->getByte() === self::RECORD_TYPE_RANGE){
+				$start = $this->getLTriad();
+				$end = $this->getLTriad();
 				if(($end - $start) > 512){
 					$end = $start + 512;
 				}
@@ -95,7 +95,7 @@ abstract class AcknowledgePacket extends Packet{
 					$this->packets[$cnt++] = $c;
 				}
 			}else{
-				$this->packets[$cnt++] = $in->getLTriad();
+				$this->packets[$cnt++] = $this->getLTriad();
 			}
 		}
 	}

@@ -32,15 +32,15 @@ class IncompatibleProtocolVersion extends OfflineMessage{
 		return $result;
 	}
 
-	protected function encodePayload(PacketSerializer $out) : void{
-		$out->putByte($this->protocolVersion);
-		$this->writeMagic($out);
-		$out->putLong($this->serverId);
+	protected function encodePayload() : void{
+		$this->putByte($this->protocolVersion);
+		$this->writeMagic();
+		$this->putLong($this->serverId);
 	}
 
-	protected function decodePayload(PacketSerializer $in) : void{
-		$this->protocolVersion = $in->getByte();
-		$this->readMagic($in);
-		$this->serverId = $in->getLong();
+	protected function decodePayload() : void{
+		$this->protocolVersion = $this->getByte();
+		$this->readMagic();
+		$this->serverId = $this->getLong();
 	}
 }

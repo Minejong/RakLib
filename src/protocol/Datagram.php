@@ -43,21 +43,18 @@ class Datagram extends Packet{
 	/** @var int|null */
 	public $seqNumber = null;
 
-	protected function encodeHeader(PacketSerializer $out) : void{
-		$out->putByte(self::BITFLAG_VALID | $this->headerFlags);
+	protected function encodeHeader() : void{
+		$this->putByte(self::BITFLAG_VALID | $this->headerFlags);
 	}
 
-	protected function encodePayload(PacketSerializer $out) : void{
-		$out->putLTriad($this->seqNumber);
+	protected function encodePayload() : void{
+		$this->putLTriad($this->seqNumber);
 		foreach($this->packets as $packet){
-			$out->put($packet->toBinary());
+			$this->put($packet->toBinary());
 		}
 	}
 
-	/**
-	 * @return int
-	 */
-	public function length(){
+	public function length() : int{
 		$length = self::HEADER_SIZE;
 		foreach($this->packets as $packet){
 			$length += $packet->getTotalLength();
@@ -66,15 +63,15 @@ class Datagram extends Packet{
 		return $length;
 	}
 
-	protected function decodeHeader(PacketSerializer $in) : void{
-		$this->headerFlags = $in->getByte();
+	protected function decodeHeader() : void{
+		$this->headerFlags = $this->getByte();
 	}
 
-	protected function decodePayload(PacketSerializer $in) : void{
-		$this->seqNumber = $in->getLTriad();
+	protected function decodePayload() : void{
+		$this->seqNumber = $this->getLTriad();
 
-		while(!$in->feof()){
-			$this->packets[] = EncapsulatedPacket::fromBinary($in);
+		while(!$this->feof()){
+			$this->packets[] = EncapsulatedPacket::fromBinary($this);
 		}
 	}
 }

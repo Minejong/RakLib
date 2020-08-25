@@ -50,35 +50,36 @@ class ConnectionRequestAccepted extends Packet{
 		return $result;
 	}
 
-	public function __construct(){
+	public function __construct(string $buffer = "", int $offset = 0){
+		parent::__construct($buffer, $offset);
 		$this->systemAddresses[] = new InternetAddress("127.0.0.1", 0, 4);
 	}
 
-	protected function encodePayload(PacketSerializer $out) : void{
-		$out->putAddress($this->address);
-		$out->putLShort($this->systemIndex);
+	protected function encodePayload() : void{
+		$this->putAddress($this->address);
+		$this->putLShort($this->systemIndex);
 
 		$dummy = new InternetAddress("0.0.0.0", 0, 4);
 		for($i = 0; $i < RakLib::$SYSTEM_ADDRESS_COUNT; ++$i){
-			$out->putAddress($this->systemAddresses[$i] ?? $dummy);
+			$this->putAddress($this->systemAddresses[$i] ?? $dummy);
 		}
 
-		$out->putLong($this->sendPingTime);
-		$out->putLong($this->sendPongTime);
+		$this->putLong($this->sendPingTime);
+		$this->putLong($this->sendPongTime);
 	}
 
-	protected function decodePayload(PacketSerializer $in) : void{
-		$this->address = $in->getAddress();
-		$this->systemIndex = $in->getLShort();
+	protected function decodePayload() : void{
+		$this->address = $this->getAddress();
+		$this->systemIndex = $this->getLShort();
 
-		$len = $in->getBufferSize();
+		$len = $this->getBufferSize();
 		$dummy = new InternetAddress("0.0.0.0", 0, 4);
 
 		for($i = 0; $i < RakLib::$SYSTEM_ADDRESS_COUNT; ++$i){
-			$this->systemAddresses[$i] = $in->getOffset() + 16 < $len ? $in->getAddress() : $dummy; //HACK: avoids trying to read too many addresses on bad data
+			$this->systemAddresses[$i] = $this->getOffset() + 16 < $len ? $this->getAddress() : $dummy; //HACK: avoids trying to read too many addresses on bad data
 		}
 
-		$this->sendPingTime = $in->getLong();
-		$this->sendPongTime = $in->getLong();
+		$this->sendPingTime = $this->getLong();
+		$this->sendPongTime = $this->getLong();
 	}
 }

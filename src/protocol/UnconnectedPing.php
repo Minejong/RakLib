@@ -27,15 +27,15 @@ class UnconnectedPing extends OfflineMessage{
 	/** @var int */
 	public $clientId;
 
-	protected function encodePayload(PacketSerializer $out) : void{
-		$out->putLong($this->sendPingTime);
-		$this->writeMagic($out);
-		$out->putLong($this->clientId);
+	protected function encodePayload() : void{
+		$this->putLong($this->sendPingTime);
+		$this->writeMagic();
+		$this->putLong($this->clientId);
 	}
 
-	protected function decodePayload(PacketSerializer $in) : void{
-		$this->sendPingTime = $in->getLong();
-		$this->readMagic($in);
-		$this->clientId = $in->getLong();
+	protected function decodePayload() : void{
+		$this->sendPingTime = $this->getLong();
+		$this->readMagic();
+		$this->clientId = $this->getLong();
 	}
 }

@@ -25,16 +25,17 @@ use raklib\protocol\Datagram;
 use raklib\protocol\EncapsulatedPacket;
 use raklib\protocol\NACK;
 use raklib\protocol\Packet;
-use raklib\protocol\PacketSerializer;
 use raklib\utils\ExceptionTraceCleaner;
 use raklib\utils\InternetAddress;
 use function asort;
 use function bin2hex;
 use function count;
 use function get_class;
+use function max;
 use function microtime;
 use function ord;
 use function preg_match;
+use function serialize;
 use function strlen;
 use function time;
 use function time_sleep_until;
@@ -71,7 +72,7 @@ class Server implements ServerInterface{
 	protected $name = "";
 
 	/** @var int */
-	protected $packetLimit = 200;
+	protected $packetLimit = 2000;
 
 	/** @var bool */
 	protected $shutdown = false;
@@ -257,13 +258,13 @@ class Server implements ServerInterface{
 				$header = ord($buffer[0]);
 				if(($header & Datagram::BITFLAG_VALID) !== 0){
 					if(($header & Datagram::BITFLAG_ACK) !== 0){
-						$packet = new ACK();
+						$packet = new ACK($buffer);
 					}elseif(($header & Datagram::BITFLAG_NAK) !== 0){
-						$packet = new NACK();
+						$packet = new NACK($buffer);
 					}else{
-						$packet = new Datagram();
+						$packet = new Datagram($buffer);
 					}
-					$packet->decode(new PacketSerializer($buffer));
+					$packet->decode();
 					$session->handlePacket($packet);
 				}else{
 					$this->logger->debug("Ignored unconnected packet from $address due to session already opened (0x" . bin2hex($buffer[0]) . ")");
@@ -304,10 +305,9 @@ class Server implements ServerInterface{
 	}
 
 	public function sendPacket(Packet $packet, InternetAddress $address) : void{
-		$out = new PacketSerializer(); //TODO: reusable streams to reduce allocations
-		$packet->encode($out);
+		$packet->encode();
 		try{
-			$this->sendBytes += $this->socket->writePacket($out->getBuffer(), $address->ip, $address->port);
+			$this->sendBytes += $this->socket->writePacket($packet->getBuffer(), $address->ip, $address->port);
 		}catch(SocketException $e){
 			$this->logger->debug($e->getMessage());
 		}
@@ -393,7 +393,7 @@ class Server implements ServerInterface{
 		$this->checkSessions();
 
 		while(isset($this->sessions[$this->nextSessionId])){
-			$this->nextSessionId++;
+			++$this->nextSessionId;
 			$this->nextSessionId &= 0x7fffffff; //we don't expect more than 2 billion simultaneous connections, and this fits in 4 bytes
 		}
 

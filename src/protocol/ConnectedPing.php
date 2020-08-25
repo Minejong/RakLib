@@ -31,11 +31,11 @@ class ConnectedPing extends Packet{
 		return $result;
 	}
 
-	protected function encodePayload(PacketSerializer $out) : void{
-		$out->putLong($this->sendPingTime);
+	protected function encodePayload() : void{
+		$this->putLong($this->sendPingTime);
 	}
 
-	protected function decodePayload(PacketSerializer $in) : void{
-		$this->sendPingTime = $in->getLong();
+	protected function decodePayload() : void{
+		$this->sendPingTime = $this->getLong();
 	}
 }

@@ -28,7 +28,7 @@ use function inet_pton;
 use function strlen;
 use const AF_INET6;
 
-final class PacketSerializer extends BinaryStream{
+class PacketSerializer extends BinaryStream{
 
 	/**
 	 * @throws BinaryDataException

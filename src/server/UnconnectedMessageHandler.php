@@ -24,7 +24,6 @@ use raklib\protocol\OpenConnectionReply1;
 use raklib\protocol\OpenConnectionReply2;
 use raklib\protocol\OpenConnectionRequest1;
 use raklib\protocol\OpenConnectionRequest2;
-use raklib\protocol\PacketSerializer;
 use raklib\protocol\UnconnectedPing;
 use raklib\protocol\UnconnectedPingOpenConnections;
 use raklib\protocol\UnconnectedPong;
@@ -60,13 +59,12 @@ class UnconnectedMessageHandler{
 		if($pk === null){
 			return false;
 		}
-		$reader = new PacketSerializer($payload);
-		$pk->decode($reader);
+		$pk->decode();
 		if(!$pk->isValid()){
 			return false;
 		}
-		if(!$reader->feof()){
-			$remains = substr($reader->getBuffer(), $reader->getOffset());
+		if(!$pk->feof()){
+			$remains = substr($pk->getBuffer(), $pk->getOffset());
 			$this->server->getLogger()->debug("Still " . strlen($remains) . " bytes unread in " . get_class($pk) . " from $address");
 		}
 		return $this->handle($pk, $address);
@@ -109,7 +107,9 @@ class UnconnectedMessageHandler{
 	public function getPacketFromPool(string $buffer) : ?OfflineMessage{
 		$pk = $this->packetPool[ord($buffer[0])];
 		if($pk !== null){
-			return clone $pk;
+			$pk = clone $pk;
+			$pk->setBuffer($buffer);
+			return $pk;
 		}
 
 		return null;
