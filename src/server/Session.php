@@ -118,7 +118,7 @@ class Session{
 				$this->sendPacket($datagram);
 			},
 			function(int $identifierACK) : void{
-				$this->server->getEventListener()->notifyACK($this->internalId, $identifierACK);
+				$this->server->getEventListener()->onPacketAck($this->internalId, $identifierACK);
 			}
 		);
 	}
@@ -250,7 +250,7 @@ class Session{
 				$this->handlePong($dataPacket->sendPingTime, $dataPacket->sendPongTime);
 			}
 		}elseif($this->state === self::STATE_CONNECTED){
-			$this->server->getEventListener()->handleEncapsulated($this->internalId, $packet->buffer);
+			$this->server->getEventListener()->onPacketReceive($this->internalId, $packet->buffer);
 		}else{
 			//$this->logger->notice("Received packet before connection: " . bin2hex($packet->buffer));
 		}
@@ -261,7 +261,7 @@ class Session{
 	 */
 	private function handlePong(int $sendPingTime, int $sendPongTime) : void{
 		$this->lastPingMeasure = $this->server->getRakNetTimeMS() - $sendPingTime;
-		$this->server->getEventListener()->updatePing($this->internalId, $this->lastPingMeasure);
+		$this->server->getEventListener()->onPingMeasure($this->internalId, $this->lastPingMeasure);
 	}
 
 	public function handlePacket(Packet $packet) : void{
@@ -285,7 +285,7 @@ class Session{
 			$this->state = self::STATE_DISCONNECTING;
 			$this->disconnectionTime = microtime(true);
 			$this->queueConnectedPacket(new DisconnectionNotification(), PacketReliability::RELIABLE_ORDERED, 0, true);
-			$this->server->getEventListener()->closeSession($this->internalId, $reason);
+			$this->server->getEventListener()->onClientDisconnect($this->internalId, $reason);
 			$this->logger->debug("Requesting graceful disconnect because \"$reason\"");
 		}
 	}
@@ -295,7 +295,7 @@ class Session{
 	 */
 	public function forciblyDisconnect(string $reason) : void{
 		$this->state = self::STATE_DISCONNECTED;
-		$this->server->getEventListener()->closeSession($this->internalId, $reason);
+		$this->server->getEventListener()->onClientDisconnect($this->internalId, $reason);
 		$this->logger->debug("Forcibly disconnecting session due to \"$reason\"");
 	}
 
