@@ -311,7 +311,7 @@ class Server implements ServerInterface{
 	public function sendPacket(Packet $packet, InternetAddress $address) : void{
 		$packet->encode();
 		try{
-			$this->sendBytes += $this->socket->writePacket($packet->getBuffer(), $address->ip, $address->port);
+			$this->sendBytes += $this->socket->writePacket($packet->getBuffer(), $address->getIp(), $address->getPort());
 		}catch(SocketException $e){
 			$this->logger->debug($e->getMessage());
 		}
