@@ -97,9 +97,6 @@ class Server implements ServerInterface{
 	/** @var int */
 	protected $maxMtuSize;
 
-	/** @var InternetAddress */
-	protected $reusableAddress;
-
 	/** @var int */
 	protected $nextSessionId = 0;
 
@@ -123,8 +120,6 @@ class Server implements ServerInterface{
 		$this->startTimeMS = (int) (microtime(true) * 1000);
 
 		$this->unconnectedMessageHandler = new UnconnectedMessageHandler($this, $protocolAcceptor);
-
-		$this->reusableAddress = clone $this->socket->getBindAddress();
 	}
 
 	/**
@@ -135,7 +130,7 @@ class Server implements ServerInterface{
 	}
 
 	public function getPort() : int{
-		return $this->socket->getBindAddress()->port;
+		return $this->socket->getBindAddress()->getPort();
 	}
 
 	public function getMaxMtuSize() : int{
@@ -224,11 +219,10 @@ class Server implements ServerInterface{
 		++$this->ticks;
 	}
 
+	/** @phpstan-impure */
 	private function receivePacket() : bool{
-		$address = $this->reusableAddress;
-
 		try{
-			$buffer = $this->socket->readPacket($address->ip, $address->port);
+			$buffer = $this->socket->readPacket($addressIp, $addressPort);
 		}catch(SocketException $e){
 			$error = $e->getCode();
 			if($error === SOCKET_ECONNRESET){ //client disconnected improperly, maybe crash or lost connection
@@ -244,23 +238,24 @@ class Server implements ServerInterface{
 		$len = strlen($buffer);
 
 		$this->receiveBytes += $len;
-		if(isset($this->block[$address->ip])){
+		if(isset($this->block[$addressIp])){
 			return true;
 		}
 
-		if(isset($this->ipSec[$address->ip])){
-			if(++$this->ipSec[$address->ip] >= $this->packetLimit){
-				$this->blockAddress($address->ip);
+		if(isset($this->ipSec[$addressIp])){
+			if(++$this->ipSec[$addressIp] >= $this->packetLimit){
+				$this->blockAddress($addressIp);
 				return true;
 			}
 		}else{
-			$this->ipSec[$address->ip] = 1;
+			$this->ipSec[$addressIp] = 1;
 		}
 
 		if($len < 1){
 			return true;
 		}
 
+		$address = new InternetAddress($addressIp, $addressPort, $this->socket->getBindAddress()->getVersion());
 		try{
 			$session = $this->getSessionByAddress($address);
 			if($session !== null){
@@ -283,7 +278,7 @@ class Server implements ServerInterface{
 					foreach($this->rawPacketFilters as $pattern){
 						if(preg_match($pattern, $buffer) > 0){
 							$handled = true;
-							$this->eventListener->onRawPacketReceive($address->ip, $address->port, $buffer);
+							$this->eventListener->onRawPacketReceive($address->getIp(), $address->getPort(), $buffer);
 							break;
 						}
 					}
@@ -307,7 +302,7 @@ class Server implements ServerInterface{
 			}else{
 				$logFn();
 			}
-			$this->blockAddress($address->ip, 5);
+			$this->blockAddress($address->getIp(), 5);
 		}
 
 		return true;
@@ -412,7 +407,7 @@ class Server implements ServerInterface{
 
 	public function openSession(Session $session) : void{
 		$address = $session->getAddress();
-		$this->eventListener->onClientConnect($session->getInternalId(), $address->ip, $address->port, $session->getID());
+		$this->eventListener->onClientConnect($session->getInternalId(), $address->getIp(), $address->getPort(), $session->getID());
 	}
 
 	private function checkSessions() : void{

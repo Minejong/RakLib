@@ -21,6 +21,7 @@ use raklib\generic\ReceiveReliabilityLayer;
 use raklib\generic\SendReliabilityLayer;
 use raklib\protocol\ACK;
 use raklib\protocol\AcknowledgePacket;
+use raklib\protocol\ConnectedPacket;
 use raklib\protocol\ConnectedPing;
 use raklib\protocol\ConnectedPong;
 use raklib\protocol\ConnectionRequest;
@@ -181,7 +182,7 @@ class Session{
 		}
 	}
 
-	private function queueConnectedPacket(Packet $packet, int $reliability, int $orderChannel, bool $immediate = false) : void{
+	private function queueConnectedPacket(ConnectedPacket $packet, int $reliability, int $orderChannel, bool $immediate = false) : void{
 		$packet->encode();
 
 		$encapsulated = new EncapsulatedPacket();
@@ -225,7 +226,7 @@ class Session{
 					$dataPacket = new NewIncomingConnection($packet->buffer);
 					$dataPacket->decode();
 
-					if($dataPacket->address->port === $this->server->getPort() or !$this->server->portChecking){
+					if($dataPacket->address->getPort() === $this->server->getPort() or !$this->server->portChecking){
 						$this->state = self::STATE_CONNECTED; //FINALLY!
 						$this->isTemporal = false;
 						$this->server->openSession($this);

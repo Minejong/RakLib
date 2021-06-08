@@ -17,7 +17,7 @@ declare(strict_types=1);
 
 namespace raklib\protocol;
 
-class DisconnectionNotification extends Packet{
+class DisconnectionNotification extends ConnectedPacket{
 	public static $ID = MessageIdentifiers::ID_DISCONNECTION_NOTIFICATION;
 
 	protected function encodePayload() : void{

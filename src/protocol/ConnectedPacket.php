@@ -15,8 +15,11 @@
 
 declare(strict_types=1);
 
-namespace raklib\server\ipc;
+namespace raklib\protocol;
 
-interface InterThreadChannelWriter{
-	public function write(string $str) : void;
+/**
+ * Represents a packet which is sent inside an EncapsulatedPacket.
+ */
+abstract class ConnectedPacket extends Packet{
+
 }
